@@ -1,0 +1,1 @@
+g++ -static jpeg.cpp -o jpeg
