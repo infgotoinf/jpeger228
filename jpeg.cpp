@@ -5,6 +5,8 @@
 #include "stb_image.h"
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "stb_image_write.h"
+#define STB_IMAGE_RESIZE_IMPLEMENTATION
+#include "stb_image_resize2.h"
 
 
 void PrintHelp()
@@ -16,7 +18,10 @@ Arguments:
     [SOURCE] Path to an image
 
 Options:
-    -h - print this message)" << std::endl;
+    -h - print this message
+
+Example:
+    jpeg image/img.png)" << std::endl;
 }
 
 
@@ -59,6 +64,13 @@ void exportImage(const char* name, int width, int height, int channels, unsigned
 {
     stbi_write_png(name, width, height, channels, img, width * channels);
     std::cout << "Image exported to " << name << std::endl;
+}
+
+unsigned char* resampleImage(unsigned char* img, int width, int height, int output_w, int output_h)
+{
+    return stbir_resize_uint8_linear( img, width, height, 0
+                                    , NULL, output_w, output_h, 0
+                                    , stbir_pixel_layout::STBIR_RGB);
 }
 
 
@@ -113,6 +125,36 @@ void toChrominanceRed(unsigned char* img, int width, int height, int channels)
 }
 
 
+void mergeImages(unsigned char* img, int width, int height, int channels,
+                 unsigned char* img2, unsigned char* img3, int resample_strength)
+{
+    int new_width = width / resample_strength;
+    int new_height = height / resample_strength;
+
+    for (size_t i = 0; i < width * height * channels; i += channels)
+    {
+        int pixel_index = i / channels;
+        int x = pixel_index % width;
+        int y = pixel_index / width;
+
+        int ds_x = x / resample_strength;
+        int ds_y = y / resample_strength;
+        int j = (ds_y * new_width + ds_x) * channels;
+
+        if (j + 2 >= new_width * new_height * channels) {
+            continue;
+        }
+
+        struct RGB rgb  = { .R = img[i],  .G = img[i+1],  .B = img[i+2] };
+        struct RGB rgb2 = { .R = img2[j], .G = img2[j+1], .B = img2[j+2] };
+        struct RGB rgb3 = { .R = img3[j], .G = img3[j+1], .B = img3[j+2] };
+
+        img[i]   = rgb.R + rgb2.R + rgb3.R;
+        img[i+1] = rgb.G + rgb2.G + rgb3.G;
+        img[i+2] = rgb.B + rgb2.B + rgb3.B;
+    }
+}
+
 int main(int argc, char* argv[])
 {
     if (argc <= 1)
@@ -148,14 +190,30 @@ int main(int argc, char* argv[])
 
     toLuminance(img, width, height, channels);
     exportImage("export/Luminance.png", width, height, channels, img);
+    stbi_image_free(img);
     
+    // We also do resample for CrB and CrR cause jpeg algorithm
+    int resample_strength = 4;
     img = stbi_load(argv[1], &width, &height, nullptr, channels);
     toCrominanceBlue(img, width, height, channels);
-    exportImage("export/ChominanceBlue.png", width, height, channels, img);
-    
+    unsigned char* img2 = resampleImage(img, width, height, width / resample_strength, height / resample_strength);
+    std::cout << "Image downsampled" << std::endl;
+    exportImage("export/ChominanceBlue.png", width / resample_strength, height / resample_strength, channels, img2);
+    stbi_image_free(img);
+
     img = stbi_load(argv[1], &width, &height, nullptr, channels);
     toChrominanceRed(img, width, height, channels);
-    exportImage("export/ChrominanceRed.png", width, height, channels, img);
+    unsigned char* img3 = resampleImage(img, width, height, width / resample_strength, height / resample_strength);
+    std::cout << "Image downsampled" << std::endl;
+    exportImage("export/ChrominanceRed.png", width / resample_strength, height / resample_strength, channels, img3);
+    stbi_image_free(img);
 
+    img = stbi_load(argv[1], &width, &height, nullptr, channels);
+    mergeImages(img, width, height, channels, img2, img3, resample_strength);
+    exportImage("export/RGBfromYCbCr.png", width, height, channels, img);
+    stbi_image_free(img);
+    stbi_image_free(img2);
+    stbi_image_free(img3);
+    
     return 0;
 }
